@@ -1,0 +1,7 @@
+google-generativeai
+requests
+xhs
+pydantic
+python-dotenv
+tenacity
+Pillow
