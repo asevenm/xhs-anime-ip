@@ -3,76 +3,109 @@ import json
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed
 from dotenv import load_dotenv
+from openai import OpenAI
 from google import genai
-from PIL import Image
+import requests
 
 load_dotenv()
 
-# Configure Gemini API
-GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GENAI_API_KEY:
-    print("Warning: GEMINI_API_KEY not found in environment variables.")
-
-# Initialize client
-client = genai.Client(api_key=GENAI_API_KEY)
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+def generate_image_google(prompt, output_path):
+    """Generate image using Google Gemini (Imagen 3)."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found")
+        
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model="gemini-3-pro-image-preview",
+        contents=prompt,
+    )
+    
+    for part in response.parts:
+        if part.inline_data:
+            part.as_image().save(output_path)
+            return
+            
+    raise Exception("No image returned from Google API")
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+def generate_image_openai(prompt, output_path):
+    """Generate image using OpenAI Compatible API (DALL-E 3 protocol)."""
+    provider = os.getenv("IMAGE_LLM_PROVIDER", "openai").lower()
+    api_key = None
+    model = None
+    
+    if provider == "doubao":
+        api_key = os.getenv("ARK_API_KEY")
+        base_url = 'https://ark.cn-beijing.volces.com/api/v3'
+        model = os.getenv("LLM_IMAGE_MODEL", "doubao-seedream-4-5-251128")
+    elif provider == "dashscope":
+        api_key = os.getenv("DASHSCOPE_API_KEY")
+        base_url = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+        model = os.getenv("LLM_IMAGE_MODEL", "qwen-image-plus")
+    else:
+        api_key = os.getenv("GEMINI_API_KEY")
+        base_url = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+        model = os.getenv("LLM_IMAGE_MODEL", "gemini-3-pro-image-preview")
+    
+    if not api_key:
+        raise ValueError("LLM_API_KEY not found")
+
+    client = OpenAI(api_key=api_key, base_url=base_url) 
+    
+    response = client.images.generate(
+        model=model,
+        prompt=prompt,
+        n=1,
+        size="1024x1024", # Standard size, many providers require this
+        quality="standard",
+    )
+    
+    image_url = response.data[0].url
+    
+    # Download image from URL
+    img_data = requests.get(image_url).content
+    with open(output_path, 'wb') as f:
+        f.write(img_data)
+
 def generate_image(prompt, output_path, index):
-    """
-    Calls the Google Gemini API for image generation and saves the result.
-    Uses gemini-2.5-flash-image model.
-    """
     print(f"Generating image {index}...")
     
-    # Simulation Mode (if no key provided)
-    if not GENAI_API_KEY:
-        print(f"SIMULATION: Mocking generation for '{prompt[:30]}...' -> {output_path}")
-        from PIL import ImageDraw
-        img = Image.new('RGB', (1024, 1280), color=(73, 109, 137))
-        d = ImageDraw.Draw(img)
-        d.text((100, 100), f"Image {index}\n{prompt[:50]}...", fill=(255, 255, 0))
-        img.save(output_path)
-        time.sleep(1)
-        return
-
+    provider = os.getenv("IMAGE_LLM_PROVIDER", "gemini").lower()
+    
     try:
-        # Use Gemini 2.5 Flash Image model
-        response = client.models.generate_content(
-            model="gemini-3-pro-image-preview",
-            contents=prompt,
-        )
+        if provider == "gemini":
+            print(f"Using Provider: Gemini (Imagen 3)")
+            generate_image_google(prompt, output_path)
+        else:
+            # Default to OpenAI Compatible for all other providers
+            print(f"Using Provider: OpenAI Compatible ({os.getenv('LLM_BASE_URL')})")
+            generate_image_openai(prompt, output_path)
+            
+        print(f"✅ Saved: {output_path}")
         
-        # Extract and save the generated image
-        image_saved = False
-        for part in response.parts:
-            if part.inline_data:
-                image = part.as_image()
-                image.save(output_path)
-                print(f"Saved: {output_path}")
-                image_saved = True
-                break
-        
-        if not image_saved:
-            print(f"No image generated for prompt {index}")
-            raise Exception("No image returned from API")
-                
     except Exception as e:
-        print(f"Error generating image {index}: {e}")
-        raise e
+        print(f"❌ Error generating image {index}: {e}")
+        # Placeholder on failure (optional)
+        # from PIL import Image, ImageDraw
+        # img = Image.new('RGB', (1024, 1280), color=(50, 50, 50))
+        # img.save(output_path)
 
 def run_painter():
     # Find the latest content folder
-    if not os.path.exists("content"):
+    content_root = "content"
+    if not os.path.exists(content_root):
         print("No content directory found. Run planner.py first.")
         return
 
-    dates = sorted(os.listdir("content"))
+    dates = sorted(os.listdir(content_root))
     if not dates:
         print("No dated folders found.")
         return
         
     latest_date = dates[-1]
-    work_dir = os.path.join("content", latest_date)
+    work_dir = os.path.join(content_root, latest_date)
     meta_path = os.path.join(work_dir, "meta.json")
     
     if not os.path.exists(meta_path):
@@ -99,9 +132,8 @@ def run_painter():
         print(f"\nPrompt {i+1}: {prompt[:80]}...")
         generate_image(prompt, output_path, i+1)
         
-        # Rate limiting - avoid hitting API limits
+        # Rate limiting
         if i < len(prompts) - 1:
-            print("Waiting 2 seconds before next generation...")
             time.sleep(2)
     
     print("\n" + "=" * 50)

@@ -3,21 +3,11 @@ import json
 import datetime
 from typing import List
 from pydantic import BaseModel, Field
-import google.generativeai as genai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-# Configure Gemini
-GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GENAI_API_KEY:
-    print("Warning: GEMINI_API_KEY not found in environment variables.")
-
-try:
-    genai.configure(api_key=GENAI_API_KEY)
-except Exception as e:
-    print(f"Error configuring Gemini: {e}")
 
 class DailyContent(BaseModel):
     date: str = Field(description="Date of the post in YYYY-MM-DD format")
@@ -27,15 +17,8 @@ class DailyContent(BaseModel):
     tags: List[str] = Field(description="List of hashtags (e.g., #Ghibli #Anime #Wallpaper)")
     image_prompts: List[str] = Field(description="List of 6 distinct but thematically consistent image prompts for the AI")
 
-def generate_daily_plan(model_name="gemini-2.5-pro"):
-    """
-    Generates the daily content plan using Gemini.
-    """
-    model = genai.GenerativeModel(model_name)
-    
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    
-    prompt = f"""
+def get_common_prompt(today: str) -> str:
+    return f"""
     你是小红书新海诚风格壁纸账号的创意总监。我们的定位是"新海诚美学"——**极致光影**与**超写实壁纸感**。
     
     任务：为今天（{today}）策划内容。
@@ -69,7 +52,7 @@ def generate_daily_plan(model_name="gemini-2.5-pro"):
          * 也可以选择**同一作者/工作室的多个作品IP混搭**（如：宫崎骏系列、CLAMP系列、京阿尼系列等）
          * 热门IP推荐：
            - 宫崎骏系列：千寻、白龙、苏菲、哈尔、琪琪、龙猫、阿莉埃蒂
-           - 新海诚系列：三叶、�的、陽菜、帆高、铃芽、草太
+           - 新海诚系列：三叶、的、陽菜、帆高、铃芽、草太
            - 经典少女漫：小樱、小狼、月野兔、木之本樱
            - 热血番：路飞、鸣人、炭治郎、五条悟、杀生丸、犬夜叉
            - 治愈系：夏目贵志、猫咪老师、薇尔莉特
@@ -80,15 +63,71 @@ def generate_daily_plan(model_name="gemini-2.5-pro"):
     输出JSON格式，严格遵守DailyContent schema。
     """
 
+def get_client_config():
+    """Determine API configuration based on environment variables."""
+    provider = os.getenv("TEXT_LLM_PROVIDER", "gemini").lower()
+    
+    if provider == "gemini":
+        # Google Gemini via OpenAI Compatible Endpoint
+        return {
+            "api_key": os.getenv("GEMINI_API_KEY"),
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "model": "gemini-2.5-pro",
+            "provider_name": "Gemini (OpenAI Interface)"
+        }
+    elif provider == "doubao":
+        return {
+            "api_key": os.getenv("ARK_API_KEY"),
+            "base_url": 'https://ark.cn-beijing.volces.com/api/v3',
+            "model": os.getenv("LLM_MODEL_NAME", "Doubao-1.5-pro-32k"),
+            "provider_name": "Ark (OpenAI Interface)"
+        }
+    elif provider == "dashscope":
+        return {
+            "api_key": os.getenv("DASHSCOPE_API_KEY"),
+            "base_url": 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            "model": os.getenv("LLM_MODEL_NAME", "qwen3-max"),
+            "provider_name": "Dashscope (OpenAI Interface)"
+        }
+    else:
+        print(f"Unknown provider: {provider}. Falling back to Gemini.")
+        return {
+            "api_key": os.getenv("GEMINI_API_KEY"),
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "model": "gemini-2.5-pro",
+            "provider_name": "Gemini (OpenAI Interface)"
+        }   
+
+def generate_daily_plan():
+    """Generates the daily content plan."""
+    config = get_client_config()
+    
+    if not config["api_key"]:
+        print(f"Error: API Key not found for provider {config['provider_name']}")
+        return None
+        
+    print(f"Using Provider: {config['provider_name']} | Model: {config['model']}")
+    
+    today = datetime.date.today().strftime("%Y-%m-%d")
+
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=DailyContent
-            )
+        client = OpenAI(
+            api_key=config["api_key"],
+            base_url=config["base_url"]
         )
-        return json.loads(response.text)
+        
+        completion = client.chat.completions.create(
+            model=config["model"],
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
+                {"role": "user", "content": get_common_prompt(today)}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        content = completion.choices[0].message.content
+        return json.loads(content)
+        
     except Exception as e:
         print(f"Error generating content: {e}")
         return None
@@ -104,10 +143,7 @@ if __name__ == "__main__":
         with open(os.path.join(date_dir, "meta.json"), "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2, ensure_ascii=False)
             
-        # print(f"Plan generated for {plan['date']}")
-        # print(f"Title: {plan['title']}")
-        # print(f"Theme: {plan['theme']}")
-        # print(f"Tags: {plan['tags']}")
-        # print(f"Image prompts: {plan['image_prompts']}")
+        print(f"✅ Plan generated for {plan['date']}")
+        print(f"📝 Title: {plan['title']}")
     else:
-        print("Failed to generate plan.")
+        print("❌ Failed to generate plan.")
