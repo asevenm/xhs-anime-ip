@@ -1,69 +1,61 @@
 import os
 import json
-import requests
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed
 from dotenv import load_dotenv
+from google import genai
+from PIL import Image
 
 load_dotenv()
 
-# Configuration for "Nano Banana" (Placeholder for the actual API)
-# User needs to set these in .env
-IMAGE_API_URL = os.getenv("IMAGE_API_URL", "https://api.nano-banana.example.com/generate") # Replace with actual
-IMAGE_API_KEY = os.getenv("IMAGE_API_KEY")
+# Configure Gemini API
+GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GENAI_API_KEY:
+    print("Warning: GEMINI_API_KEY not found in environment variables.")
+
+# Initialize client
+client = genai.Client(api_key=GENAI_API_KEY)
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
 def generate_image(prompt, output_path, index):
     """
-    Calls the Image Generation API and saves the result.
-    This is a generic implementation. Update the payload structure based on the specific provider.
+    Calls the Google Gemini API for image generation and saves the result.
+    Uses gemini-2.5-flash-image model.
     """
     print(f"Generating image {index}...")
     
-    # Example Payload - Adjust based on actual API requirements
-    payload = {
-        "prompt": prompt + ", studio ghibli style, anime background, 4k, detailed",
-        "negative_prompt": "low quality, text, watermark, ugly, deformed",
-        "width": 1024,
-        "height": 1280, # 4:5 ratio best for Xiaohongshu
-        "steps": 25
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {IMAGE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     # Simulation Mode (if no key provided)
-    if not IMAGE_API_KEY or "example.com" in IMAGE_API_URL:
+    if not GENAI_API_KEY:
         print(f"SIMULATION: Mocking generation for '{prompt[:30]}...' -> {output_path}")
-        # Create a dummy placeholder image
-        from PIL import Image, ImageDraw, ImageFont
-        img = Image.new('RGB', (1024, 1280), color = (73, 109, 137))
+        from PIL import ImageDraw
+        img = Image.new('RGB', (1024, 1280), color=(73, 109, 137))
         d = ImageDraw.Draw(img)
-        d.text((100,100), f"Image {index}\n{prompt[:50]}...", fill=(255,255,0))
+        d.text((100, 100), f"Image {index}\n{prompt[:50]}...", fill=(255, 255, 0))
         img.save(output_path)
-        time.sleep(1) # Simulate delay
+        time.sleep(1)
         return
 
     try:
-        response = requests.post(IMAGE_API_URL, json=payload, headers=headers)
-        response.raise_for_status()
+        # Use Gemini 2.5 Flash Image model
+        response = client.models.generate_content(
+            model="gemini-3-pro-image-preview",
+            contents=prompt,
+        )
         
-        # Assuming response returns binary image data or a URL
-        # Case A: JSON with URL
-        if "url" in response.json():
-            image_url = response.json()["url"]
-            img_data = requests.get(image_url).content
-            with open(output_path, 'wb') as f:
-                f.write(img_data)
-        # Case B: Direct Binary
-        else:
-             with open(output_path, 'wb') as f:
-                f.write(response.content)
+        # Extract and save the generated image
+        image_saved = False
+        for part in response.parts:
+            if part.inline_data:
+                image = part.as_image()
+                image.save(output_path)
+                print(f"Saved: {output_path}")
+                image_saved = True
+                break
+        
+        if not image_saved:
+            print(f"No image generated for prompt {index}")
+            raise Exception("No image returned from API")
                 
-        print(f"Saved: {output_path}")
-        
     except Exception as e:
         print(f"Error generating image {index}: {e}")
         raise e
@@ -92,6 +84,10 @@ def run_painter():
         
     prompts = data.get("image_prompts", [])
     
+    print(f"Found {len(prompts)} prompts to generate")
+    print(f"Output directory: {work_dir}")
+    print("-" * 50)
+    
     for i, prompt in enumerate(prompts):
         output_filename = f"{i+1}.png"
         output_path = os.path.join(work_dir, output_filename)
@@ -99,8 +95,17 @@ def run_painter():
         if os.path.exists(output_path):
             print(f"Image {output_filename} already exists. Skipping.")
             continue
-            
+        
+        print(f"\nPrompt {i+1}: {prompt[:80]}...")
         generate_image(prompt, output_path, i+1)
+        
+        # Rate limiting - avoid hitting API limits
+        if i < len(prompts) - 1:
+            print("Waiting 2 seconds before next generation...")
+            time.sleep(2)
+    
+    print("\n" + "=" * 50)
+    print("Image generation complete!")
 
 if __name__ == "__main__":
     run_painter()

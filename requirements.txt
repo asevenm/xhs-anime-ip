@@ -1,7 +1,7 @@
+google-genai
 google-generativeai
-requests
-xhs
 pydantic
 python-dotenv
+pillow
 tenacity
-Pillow
+playwright

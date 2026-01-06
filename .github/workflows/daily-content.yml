@@ -1,0 +1,58 @@
+name: Daily Content Generation
+
+on:
+  schedule:
+    # 每天北京时间早上 8:00 运行 (UTC 0:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  generate-content:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install google-genai google-generativeai pydantic python-dotenv pillow tenacity
+      
+      - name: Generate daily plan
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python planner.py
+      
+      - name: Generate images
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python painter.py
+      
+      - name: Get today's date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+      
+      - name: Commit and push content
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add content/
+          git commit -m "📸 Daily content for ${{ steps.date.outputs.date }}" || echo "No changes to commit"
+          git push
+      
+      - name: Send notification (optional)
+        if: success()
+        run: |
+          echo "✅ Content generated for ${{ steps.date.outputs.date }}"
+          echo "📁 Check the content/ folder and run 'python3 publisher.py' to publish"
+          # 如果配置了 Telegram，取消下面的注释
+          # curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          #   -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          #   -d text="🎨 小红书内容已生成！请运行 publisher.py 发布"
