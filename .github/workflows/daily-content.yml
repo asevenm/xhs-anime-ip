@@ -2,8 +2,8 @@ name: Daily Content Generation
 
 on:
   schedule:
-    # 每天北京时间早上 8:00 运行 (UTC 0:00)
-    - cron: '0 0 * * *'
+    # 每天北京时间中午 12:00 运行 (UTC 4:00)
+    - cron: '0 4 * * *'
   workflow_dispatch:  # 允许手动触发
 
 jobs:
