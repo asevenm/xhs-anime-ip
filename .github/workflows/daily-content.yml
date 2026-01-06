@@ -6,6 +6,9 @@ on:
     - cron: '0 4 * * *'
   workflow_dispatch:  # 允许手动触发
 
+permissions:
+  contents: write
+
 jobs:
   generate-content:
     runs-on: ubuntu-latest
@@ -46,6 +49,7 @@ jobs:
           git add content/
           git commit -m "📸 Daily content for ${{ steps.date.outputs.date }}" || echo "No changes to commit"
           git push
+      
       - name: Publish content
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
