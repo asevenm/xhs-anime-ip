@@ -56,15 +56,25 @@ def publish_to_xhs():
     print(f"🖼️  图片: {len(image_paths)} 张")
     print("=" * 50)
     
+    # 检查是否在 GitHub Actions 运行
+    is_github_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    
     with sync_playwright() as p:
         # 使用持久化上下文，保存登录状态
         os.makedirs(USER_DATA_DIR, exist_ok=True)
         
+        # 如果是 GitHub Actions，必须使用 headless=True
+        # 如果是本地，默认 False 以便调试
+        headless_mode = is_github_actions
+        
+        print(f"🚀 启动浏览器 (Headless: {headless_mode})...")
+        
         browser = p.chromium.launch_persistent_context(
             user_data_dir=USER_DATA_DIR,
-            headless=False,  # 显示浏览器窗口
+            headless=headless_mode,
             viewport={"width": 1280, "height": 900},
             locale="zh-CN",
+            args=["--disable-blink-features=AutomationControlled"] # 尝试规避检测
         )
         
         page = browser.pages[0] if browser.pages else browser.new_page()
@@ -72,6 +82,17 @@ def publish_to_xhs():
         # 应用 stealth 模式
         if stealth_sync:
             stealth_sync(page)
+            
+        # 尝试从环境变量加载 Cookies (用于 GitHub Actions)
+        cookies_json = os.environ.get("COOKIES_JSON")
+        if cookies_json:
+            try:
+                print("🍪 检测到 cookies 环境变量，正在注入...")
+                cookies = json.loads(cookies_json)
+                browser.add_cookies(cookies)
+                print("   Cookies 注入成功")
+            except Exception as e:
+                print(f"❌ Cookies 注入失败: {e}")
         
         try:
             # 访问创作者中心
@@ -239,11 +260,21 @@ def publish_to_xhs():
             
         except Exception as e:
             print(f"\n❌ 发布失败: {e}")
-            # print("\n按 Enter 键关闭浏览器...")
-            # input()
-            time.sleep(5)
+            if not is_github_actions:
+                time.sleep(5)
         
         finally:
+            # 如果是本地运行，保存 cookies 方便导出到 GitHub
+            if not is_github_actions:
+                try:
+                    cookies = browser.cookies()
+                    with open("xhs_cookies.json", "w", encoding="utf-8") as f:
+                        json.dump(cookies, f, indent=2)
+                    print(f"\n🍪 Cookies 已保存到 {os.path.abspath('xhs_cookies.json')}")
+                    print("   请复制此文件内容到 GitHub Secrets (Name: COOKIES_JSON)")
+                except Exception as e:
+                    print(f"   Cookies 保存失败: {e}")
+            
             browser.close()
             print("\n👋 浏览器已关闭")
 

@@ -46,8 +46,13 @@ jobs:
           git add content/
           git commit -m "📸 Daily content for ${{ steps.date.outputs.date }}" || echo "No changes to commit"
           git push
-      -  name: publish content
-        run: python publisher.py
+      - name: Publish content
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+        run: |
+          # 安装 Playwright 浏览器
+          playwright install chromium
+          python publisher.py
       
       - name: Send notification (optional)
         if: success()
