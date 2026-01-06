@@ -6,3 +6,4 @@ pillow
 tenacity
 playwright
 openai
+playwright-stealth

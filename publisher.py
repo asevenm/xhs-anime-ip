@@ -2,6 +2,11 @@ import os
 import json
 import time
 from playwright.sync_api import sync_playwright
+# try-except import in case it's not installed
+try:
+    from playwright_stealth import stealth_sync
+except ImportError:
+    stealth_sync = None
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -63,6 +68,10 @@ def publish_to_xhs():
         )
         
         page = browser.pages[0] if browser.pages else browser.new_page()
+        
+        # 应用 stealth 模式
+        if stealth_sync:
+            stealth_sync(page)
         
         try:
             # 访问创作者中心
@@ -168,19 +177,71 @@ def publish_to_xhs():
                         continue
             
             print("✅ 内容填写完成！")
-            print("\n" + "=" * 50)
-            print("⏸️  请在浏览器中检查内容，然后手动点击【发布】按钮")
-            print("   (自动点击发布可能触发验证码)")
-            print("=" * 50)
+
+            # 自动点击发布
+            print("\n🚀 正在自动点击发布...")
+            submit_btn = page.locator('button.submit, button:has-text("发布"), .publish-btn').first
+            if submit_btn.count() > 0:
+                submit_btn.click()
+                print("   已点击发布按钮")
+                
+                # 检测是否出现验证码（滑块）
+                try:
+                    # 等待一下看是否有滑块出现
+                    slider = page.locator('.nc_scale, .slider-container, #nc_1_n1z').first
+                    if slider.count() > 0: # 快速检查，或者用 wait_for with shorter timeout
+                         pass
+                    
+                    # 尝试等待滑块出现，最多等3秒
+                    page.wait_for_selector('.nc_scale, .slider-container, #nc_1_n1z', timeout=3000)
+                    print("⚠️  检测到滑块验证码！尝试自动滑动...")
+                    
+                    # 简单的滑块处理逻辑 (拖动滑块)
+                    slider_handle = page.locator('#nc_1_n1z, .nc_iconfont.btn_slide').first
+                    if slider_handle.count() > 0:
+                        box = slider_handle.bounding_box()
+                        if box:
+                            # 模拟拖拽
+                            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                            page.mouse.down()
+                            # 稍微带点随机性的移动
+                            page.mouse.move(box["x"] + 500, box["y"] + box["height"] / 2, steps=20)
+                            page.mouse.up()
+                            print("   已模拟滑动操作")
+                            time.sleep(2)
+                except Exception:
+                    # 没有出现滑块，或者没捕捉到
+                    pass
+
+                # 等待发布成功提示
+                try:
+                    print("   等待发布成功确认...")
+                    # 成功后通常会跳转或者是弹出提示
+                    page.wait_for_url("**/publish/**", timeout=5000) # 如果没有跳转，检查提示
+                    # 检查是否有成功toast
+                    page.wait_for_selector('text=发布成功', timeout=10000)
+                    print("🎉 发布成功！")
+                except:
+                    print("⚠️  未检测到明确的发布成功信号，请手动检查")
+                    
+            else:
+                print("❌ 未找到发布按钮，请手动点击")
             
-            # 等待用户手动发布或关闭
-            print("\n按 Enter 键关闭浏览器...")
-            input()
+            # 只有在出错或未确认成功时才暂停，否则直接退出
+            if page.locator('text=发布成功').count() == 0:
+                print("\n按 Enter 键关闭浏览器...")
+                # give user a chance to see what happened if not successful
+                # input() 
+                # To make it fully automated, we might remove input() but keep a short sleep
+                time.sleep(5)
+            else:
+                time.sleep(3) # Show success for a moment
             
         except Exception as e:
             print(f"\n❌ 发布失败: {e}")
-            print("\n按 Enter 键关闭浏览器...")
-            input()
+            # print("\n按 Enter 键关闭浏览器...")
+            # input()
+            time.sleep(5)
         
         finally:
             browser.close()

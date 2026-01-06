@@ -23,7 +23,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install google-genai google-generativeai pydantic python-dotenv pillow tenacity
+          pip install google-genai google-generativeai pydantic python-dotenv pillow tenacity playwright playwright-stealth openai
       
       - name: Generate daily plan
         env:
@@ -46,6 +46,8 @@ jobs:
           git add content/
           git commit -m "📸 Daily content for ${{ steps.date.outputs.date }}" || echo "No changes to commit"
           git push
+      -  name: publish content
+        run: python publisher.py
       
       - name: Send notification (optional)
         if: success()
