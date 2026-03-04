@@ -202,51 +202,87 @@ def publish_to_xhs():
             # 自动点击发布
             print("\n🚀 正在自动点击发布...")
             submit_btn = page.locator('button.submit, button:has-text("发布"), .publish-btn').first
+            
             if submit_btn.count() > 0:
-                submit_btn.click()
-                print("   已点击发布按钮")
-                
-                # 检测是否出现验证码（滑块）
-                try:
-                    # 等待一下看是否有滑块出现
+                # 点击发布按钮的循环，最多尝试3次
+                for attempt in range(3):
+                    print(f"   点击发布按钮 (尝试 {attempt+1})...")
+                    try:
+                        submit_btn.click()
+                    except:
+                        # 可能是被滑块遮挡，尝试 force=True
+                        submit_btn.click(force=True)
+                    
+                    # 检测是否出现验证码（滑块）
+                    time.sleep(2)
+                    
+                    # 检查滑块
                     slider = page.locator('.nc_scale, .slider-container, #nc_1_n1z').first
-                    if slider.count() > 0: # 快速检查，或者用 wait_for with shorter timeout
-                         pass
+                    if slider.count() > 0 and slider.is_visible():
+                        print("⚠️  检测到滑块验证码！尝试自动滑动...")
+                        slider_handle = page.locator('#nc_1_n1z, .nc_iconfont.btn_slide').first
+                        if slider_handle.count() > 0:
+                            box = slider_handle.bounding_box()
+                            if box:
+                                page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                                page.mouse.down()
+                                page.mouse.move(box["x"] + 500, box["y"] + box["height"] / 2, steps=20)
+                                page.mouse.up()
+                                time.sleep(2)
                     
-                    # 尝试等待滑块出现，最多等3秒
-                    page.wait_for_selector('.nc_scale, .slider-container, #nc_1_n1z', timeout=3000)
-                    print("⚠️  检测到滑块验证码！尝试自动滑动...")
+                    # 检查是否已经跳转或成功，如果是则退出点击循环
+                    if "manage" in page.url or "success" in page.url:
+                        break
+                    if page.locator('text=发布成功').count() > 0 or \
+                       page.locator('text=已发布').count() > 0:
+                        break
                     
-                    # 简单的滑块处理逻辑 (拖动滑块)
-                    slider_handle = page.locator('#nc_1_n1z, .nc_iconfont.btn_slide').first
-                    if slider_handle.count() > 0:
-                        box = slider_handle.bounding_box()
-                        if box:
-                            # 模拟拖拽
-                            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                            page.mouse.down()
-                            # 稍微带点随机性的移动
-                            page.mouse.move(box["x"] + 500, box["y"] + box["height"] / 2, steps=20)
-                            page.mouse.up()
-                            print("   已模拟滑动操作")
-                            time.sleep(2)
-                except Exception:
-                    # 没有出现滑块，或者没捕捉到
-                    pass
-
-                # 等待发布成功提示
-                try:
-                    print("   等待发布成功确认...")
-                    # 成功后通常会跳转或者是弹出提示
-                    page.wait_for_url("**/publish/**", timeout=5000) # 如果没有跳转，检查提示
-                    # 检查是否有成功toast
-                    page.wait_for_selector('text=发布成功', timeout=10000)
-                    print("🎉 发布成功！")
-                except:
-                    print("⚠️  未检测到明确的发布成功信号，请手动检查")
-                    
+                    # 如果按钮还在且可见，说明点击可能没生效，继续循环
+                    if not submit_btn.is_visible():
+                        break
+                        
+                    print("   似乎未跳转，准备重试...")
+                    time.sleep(2)
             else:
                 print("❌ 未找到发布按钮，请手动点击")
+
+            # 等待发布成功提示
+            try:
+                print("   等待发布成功确认...")
+                
+                # 轮询检查
+                start_time = time.time()
+                success = False
+                while time.time() - start_time < 15:
+                    # 检查 URL 是否包含 success 或 manage
+                    if "manage" in page.url or "success" in page.url:
+                        print("   检测到页面跳转，发布可能成功")
+                        success = True
+                        break
+                    
+                    # 检查是否有成功提示元素
+                    # 可以根据实际情况添加更多关键词
+                    if page.locator('text=发布成功').count() > 0 or \
+                       page.locator('text=已发布').count() > 0 or \
+                       page.locator('div[class*="success"]').count() > 0:
+                        print("   检测到成功提示")
+                        success = True
+                        break
+                    
+                    time.sleep(0.5)
+                
+                if success:
+                    print("🎉 发布成功！")
+                else:
+                    raise Exception("Timeout waiting for success signal")
+
+            except Exception as e:
+                print(f"⚠️  未检测到明确的发布成功信号: {e}")
+                # 截图以供调试
+                screenshot_path = os.path.join(work_dir, "publish_status_debug.png")
+                page.screenshot(path=screenshot_path)
+                print(f"   已保存页面截图到: {screenshot_path}")
+                print("   请手动检查浏览器状态")
             
             # 只有在出错或未确认成功时才暂停，否则直接退出
             if page.locator('text=发布成功').count() == 0:
